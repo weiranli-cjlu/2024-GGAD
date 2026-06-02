@@ -1,240 +1,277 @@
+import argparse
+import csv
+import os
+import random
+import time
+from datetime import datetime
+from pathlib import Path
+
+import dgl
+import numpy as np
+import scipy.sparse as sp
+import torch
 import torch.nn as nn
+from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
+from tqdm import trange, tqdm
 
 from model import Model
-from utils import *
-
-from sklearn.metrics import roc_auc_score
-import random
-import dgl
-from sklearn.metrics import average_precision_score
-import argparse
-from tqdm import tqdm
-import time
-
-# os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-# os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(map(str, [3]))
-# os.environ["KMP_DUPLICATE_LnIB_OK"] = "TRUE"
-# Set argument
-parser = argparse.ArgumentParser(description='')
-
-parser.add_argument('--dataset', type=str,
-                    default='reddit')
-parser.add_argument('--lr', type=float)
-parser.add_argument('--weight_decay', type=float, default=0.0)
-parser.add_argument('--seed', type=int, default=0)
-parser.add_argument('--embedding_dim', type=int, default=300)
-parser.add_argument('--num_epoch', type=int)
-parser.add_argument('--drop_prob', type=float, default=0.0)
-parser.add_argument('--readout', type=str, default='avg')  # max min avg  weighted_sum
-parser.add_argument('--auc_test_rounds', type=int, default=256)
-parser.add_argument('--negsamp_ratio', type=int, default=1)
-parser.add_argument('--mean', type=float, default=0.0)
-parser.add_argument('--var', type=float, default=0.0)
+from utils import adj_to_dgl_graph, load_mat, normalize_adj, preprocess_features
 
 
+DEFAULT_DATA_DIR = "~/datasets/GAD/mat"
 
-args = parser.parse_args()
 
-if args.lr is None:
-    if args.dataset in ['Amazon']:
-        args.lr = 1e-3
-    elif args.dataset in ['t_finance']:
-        args.lr = 1e-3
-    elif args.dataset in ['reddit']:
-        args.lr = 1e-3
-    elif args.dataset in ['photo']:
-        args.lr = 1e-3
-    elif args.dataset in ['elliptic']:
+def parse_seeds(seeds: str | None, num_trials: int, seed_start: int) -> list[int]:
+    if seeds:
+        return [int(s.strip()) for s in seeds.split(",") if s.strip() != ""]
+    return list(range(seed_start, seed_start + num_trials))
+
+
+def set_seed(seed: int) -> None:
+    dgl.random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
+def apply_default_args(args: argparse.Namespace) -> argparse.Namespace:
+    dataset_key = args.dataset.lower()
+
+    if args.lr is None:
         args.lr = 1e-3
 
-if args.num_epoch is None:
-    if args.dataset in ['photo']:
-        args.num_epoch = 100
-    if args.dataset in ['elliptic']:
-        args.num_epoch = 150
-    if args.dataset in ['reddit']:
-        args.num_epoch = 300
-    elif args.dataset in ['t_finance']:
-        args.num_epoch = 500
-    elif args.dataset in ['Amazon']:
-        args.num_epoch = 800
-if args.dataset in ['reddit', 'photo']:
-    args.mean = 0.02
-    args.var = 0.01
-else:
-    args.mean = 0.0
-    args.var = 0.0
+    if args.num_epoch is None:
+        default_epochs = {
+            "photo": 100,
+            "elliptic": 150,
+            "reddit": 300,
+            "t_finance": 500,
+            "t-finance": 500,
+            "amazon": 800,
+        }
+        args.num_epoch = default_epochs.get(dataset_key, 300)
+
+    if args.mean is None or args.var is None:
+        if dataset_key in {"reddit", "photo"}:
+            args.mean = 0.02 if args.mean is None else args.mean
+            args.var = 0.01 if args.var is None else args.var
+        else:
+            args.mean = 0.0 if args.mean is None else args.mean
+            args.var = 0.0 if args.var is None else args.var
+
+    return args
 
 
-print('Dataset: ', args.dataset)
+def prepare_data(args: argparse.Namespace):
+    (
+        adj,
+        features,
+        labels,
+        all_idx,
+        idx_train,
+        idx_val,
+        idx_test,
+        ano_label,
+        str_ano_label,
+        attr_ano_label,
+        normal_label_idx,
+        abnormal_label_idx,
+    ) = load_mat(
+        args.dataset,
+        data_dir=args.data_dir,
+        train_rate=args.train_rate,
+        val_rate=args.val_rate,
+        normal_rate=args.normal_rate,
+        outlier_rate=args.outlier_rate,
+        verbose=False,
+    )
 
-# Set random seed
-dgl.random.seed(args.seed)
-np.random.seed(args.seed)
-torch.manual_seed(args.seed)
-torch.cuda.manual_seed(args.seed)
-torch.cuda.manual_seed_all(args.seed)
-random.seed(args.seed)
-# os.environ['PYTHONHASHSEED'] = str(args.seed)
-# os.environ['OMP_NUM_THREADS'] = '1'
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
+    dataset_key = args.dataset.lower()
+    if dataset_key in {"amazon", "tf_finace", "t_finance", "reddit", "elliptic"}:
+        features, _ = preprocess_features(features)
+    else:
+        features = features.todense()
 
-# Load and preprocess data
-adj, features, labels, all_idx, idx_train, idx_val, \
-idx_test, ano_label, str_ano_label, attr_ano_label, normal_label_idx, abnormal_label_idx = load_mat(args.dataset)
+    _ = adj_to_dgl_graph(adj)  # 保留兼容性；当前训练未直接使用 dgl_graph。
+    raw_adj = adj
+    adj = normalize_adj(adj)
 
-if args.dataset in ['Amazon', 'tf_finace', 'reddit', 'elliptic']:
-    features, _ = preprocess_features(features)
-else:
-    features = features.todense()
+    raw_adj = (raw_adj + sp.eye(raw_adj.shape[0])).todense()
+    adj = (adj + sp.eye(adj.shape[0])).todense()
 
-dgl_graph = adj_to_dgl_graph(adj)
+    features = torch.FloatTensor(features[np.newaxis])
+    adj = torch.FloatTensor(adj[np.newaxis])
+    raw_adj = torch.FloatTensor(raw_adj[np.newaxis])
+    labels = torch.FloatTensor(labels[np.newaxis])
 
-nb_nodes = features.shape[0]
-ft_size = features.shape[1]
-raw_adj = adj
-print(adj.sum())
-adj = normalize_adj(adj)
-
-raw_adj = (raw_adj + sp.eye(raw_adj.shape[0])).todense()
-adj = (adj + sp.eye(adj.shape[0])).todense()
-
-features = torch.FloatTensor(features[np.newaxis])
-# adj = torch.FloatTensor(adj[np.newaxis])
-features = torch.FloatTensor(features)
-adj = torch.FloatTensor(adj)
-# adj = adj.to_sparse_csr()
-adj = torch.FloatTensor(adj[np.newaxis])
-raw_adj = torch.FloatTensor(raw_adj[np.newaxis])
-labels = torch.FloatTensor(labels[np.newaxis])
-
-# idx_train = torch.LongTensor(idx_train)
-# idx_val = torch.LongTensor(idx_val)
-# idx_test = torch.LongTensor(idx_test)
-
-# Initialize model and optimiser
-model = Model(ft_size, args.embedding_dim, 'prelu', args.negsamp_ratio, args.readout)
-optimiser = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-#
-# if torch.cuda.is_available():
-#     print('Using CUDA')
-#     model.cuda()
-#     features = features.cuda()
-#     adj = adj.cuda()
-#     labels = labels.cuda()
-#     raw_adj = raw_adj.cuda()
-
-# idx_train = idx_train.cuda()
-# idx_val = idx_val.cuda()
-# idx_test = idx_test.cuda()
-#
-# if torch.cuda.is_available():
-#     b_xent = nn.BCEWithLogitsLoss(reduction='none', pos_weight=torch.tensor([args.negsamp_ratio]).cuda())
-# else:
-#     b_xent = nn.BCEWithLogitsLoss(reduction='none', pos_weight=torch.tensor([args.negsamp_ratio]))
-
-b_xent = nn.BCEWithLogitsLoss(reduction='none', pos_weight=torch.tensor([args.negsamp_ratio]))
-xent = nn.CrossEntropyLoss()
+    return features, adj, raw_adj, labels, idx_test, ano_label, normal_label_idx, abnormal_label_idx
 
 
-# Train model
-with tqdm(total=args.num_epoch) as pbar:
-    pbar.set_description('Training')
-    total_time = 0
-    for epoch in range(args.num_epoch):
-        start_time = time.time()
+def train_one_trial(args: argparse.Namespace, seed: int) -> dict:
+    set_seed(seed)
+    trial_start = time.time()
+
+    features, adj, raw_adj, labels, idx_test, ano_label, normal_label_idx, abnormal_label_idx = prepare_data(args)
+
+    ft_size = features.shape[2]
+    model = Model(ft_size, args.embedding_dim, "prelu", args.negsamp_ratio, args.readout)
+    optimiser = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    b_xent = nn.BCEWithLogitsLoss(
+        reduction="none", pos_weight=torch.tensor([args.negsamp_ratio], dtype=torch.float32)
+    )
+
+    final_auc = np.nan
+    final_auprc = np.nan
+
+    for epoch in trange(args.num_epoch, desc="Epoch", position=1, leave=False):
         model.train()
         optimiser.zero_grad()
 
-        # Train model
         train_flag = True
-        emb, emb_combine, logits, emb_con, emb_abnormal = model(features, adj,
-                                                                abnormal_label_idx, normal_label_idx,
-                                                                train_flag, args)
-        if epoch % 10 == 0:
-            # save data for tsne
-            pass
+        emb, emb_combine, logits, emb_con, emb_abnormal = model(
+            features, adj, abnormal_label_idx, normal_label_idx, train_flag, args
+        )
 
-            # tsne_data_path = 'draw/tfinance/tsne_data_{}.mat'.format(str(epoch))
-            # io.savemat(tsne_data_path, {'emb': np.array(emb.cpu().detach()), 'ano_label': ano_label,
-            #                             'abnormal_label_idx': np.array(abnormal_label_idx),
-            #                             'normal_label_idx': np.array(normal_label_idx)})
+        lbl = torch.unsqueeze(
+            torch.cat((torch.zeros(len(normal_label_idx)), torch.ones(len(emb_con)))), 1
+        ).unsqueeze(0)
 
-        # BCE loss
-        lbl = torch.unsqueeze(torch.cat(
-            (torch.zeros(len(normal_label_idx)), torch.ones(len(emb_con)))),
-            1).unsqueeze(0)
-        # if torch.cuda.is_available():
-        #     lbl = lbl.cuda()
+        loss_bce = torch.mean(b_xent(logits, lbl))
 
-        loss_bce = b_xent(logits, lbl)
-        loss_bce = torch.mean(loss_bce)
-
-        # Local affinity margin loss
         emb = torch.squeeze(emb)
-
-        emb_inf = torch.norm(emb, dim=-1, keepdim=True)
-        emb_inf = torch.pow(emb_inf, -1)
-        emb_inf[torch.isinf(emb_inf)] = 0.
+        emb_inf = torch.pow(torch.norm(emb, dim=-1, keepdim=True), -1)
+        emb_inf[torch.isinf(emb_inf)] = 0.0
         emb_norm = emb * emb_inf
-
         sim_matrix = torch.mm(emb_norm, emb_norm.T)
-        raw_adj = torch.squeeze(raw_adj)
-        similar_matrix = sim_matrix * raw_adj
 
-        r_inv = torch.pow(torch.sum(raw_adj, 0), -1)
-        r_inv[torch.isinf(r_inv)] = 0.
+        raw_adj_squeezed = torch.squeeze(raw_adj)
+        similar_matrix = sim_matrix * raw_adj_squeezed
+        r_inv = torch.pow(torch.sum(raw_adj_squeezed, 0), -1)
+        r_inv[torch.isinf(r_inv)] = 0.0
         affinity = torch.sum(similar_matrix, 0) * r_inv
 
         affinity_normal_mean = torch.mean(affinity[normal_label_idx])
         affinity_abnormal_mean = torch.mean(affinity[abnormal_label_idx])
-
-        # if epoch % 10 == 0:
-        #     real_abnormal_label_idx = np.array(all_idx)[np.argwhere(ano_label == 1).squeeze()].tolist()
-        #     real_normal_label_idx = np.array(all_idx)[np.argwhere(ano_label == 0).squeeze()].tolist()
-        #     overlap = list(set(real_abnormal_label_idx) & set(real_normal_label_idx))
-        #
-        #     real_affinity, index = torch.sort(affinity[real_abnormal_label_idx])
-        #     real_affinity = real_affinity[:300]
-        #     draw_pdf(np.array(affinity[real_normal_label_idx].detach().cpu()),
-        #              np.array(affinity[abnormal_label_idx].detach().cpu()),
-        #              np.array(real_affinity.detach().cpu()), args.dataset, epoch)
-
-        confidence_margin = 0.7
-        loss_margin = (confidence_margin - (affinity_normal_mean - affinity_abnormal_mean)).clamp_min(min=0)
+        loss_margin = (args.confidence_margin - (affinity_normal_mean - affinity_abnormal_mean)).clamp_min(min=0)
 
         diff_attribute = torch.pow(emb_con - emb_abnormal, 2)
         loss_rec = torch.mean(torch.sqrt(torch.sum(diff_attribute, 1)))
 
-        loss = 1 * loss_margin + 1 * loss_bce + 1 * loss_rec
-
+        loss = loss_margin + loss_bce + loss_rec
         loss.backward()
         optimiser.step()
-        end_time = time.time()
-        total_time += end_time - start_time
-        print('Total time is', total_time)
-        if epoch % 2 == 0:
-            logits = np.squeeze(logits.cpu().detach().numpy())
-            lbl = np.squeeze(lbl.cpu().detach().numpy())
-            auc = roc_auc_score(lbl, logits)
-            # print('Traininig {} AUC:{:.4f}'.format(args.dataset, auc))
-            # AP = average_precision_score(lbl, logits, average='macro', pos_label=1, sample_weight=None)
-            # print('Traininig AP:', AP)
 
-            print("Epoch:", '%04d' % (epoch), "train_loss_margin=", "{:.5f}".format(loss_margin.item()))
-            print("Epoch:", '%04d' % (epoch), "train_loss_bce=", "{:.5f}".format(loss_bce.item()))
-            print("Epoch:", '%04d' % (epoch), "rec_loss=", "{:.5f}".format(loss_rec.item()))
-            print("Epoch:", '%04d' % (epoch), "train_loss=", "{:.5f}".format(loss.item()))
-            print("=====================================================================")
-        if epoch % 10 == 0:
-            model.eval()
-            train_flag = False
-            emb, emb_combine, logits, emb_con, emb_abnormal = model(features, adj, abnormal_label_idx, normal_label_idx,
-                                                                    train_flag, args)
-            # evaluation on the valid and test node
-            logits = np.squeeze(logits[:, idx_test, :].cpu().detach().numpy())
-            auc = roc_auc_score(ano_label[idx_test], logits)
-            print('Testing {} AUC:{:.4f}'.format(args.dataset, auc))
-            AP = average_precision_score(ano_label[idx_test], logits, average='macro', pos_label=1, sample_weight=None)
-            print('Testing AP:', AP)
+    model.eval()
+    with torch.no_grad():
+        train_flag = False
+        _emb, _emb_combine, logits, _emb_con, _emb_abnormal = model(
+            features, adj, abnormal_label_idx, normal_label_idx, train_flag, args
+        )
+        scores = np.squeeze(logits[:, idx_test, :].cpu().numpy())
+        y_true = ano_label[idx_test]
+        final_auc = roc_auc_score(y_true, scores) * 100.0
+        precision, recall, thresholds = precision_recall_curve(y_true, scores)
+        final_auprc = auc(recall, precision) * 100.0
+
+    return {
+        "auc": final_auc,
+        "auprc": final_auprc,
+        "train_time_min": (time.time() - trial_start) / 60.0,
+    }
+
+
+def metric_summary(values: list[float]) -> str:
+    arr = np.array(values, dtype=float)
+    return f"{arr.mean():.2f}±{arr.std(ddof=0):.2f}({arr.max():.2f})"
+
+
+def append_results_csv(csv_path: str, summary_row: dict) -> None:
+    path = Path(csv_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    fieldnames = [
+        "time",
+        "dataset",
+        "trial",
+        "auc",
+        "auprc",
+        "train_time_min",
+    ]
+
+    file_exists = path.exists()
+    with path.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow({k: summary_row.get(k, "") for k in fieldnames})
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="GGAD multi-trial runner")
+    parser.add_argument("--dataset", type=str, default="Reddit")
+    parser.add_argument("--data_dir", type=str, default=DEFAULT_DATA_DIR)
+    parser.add_argument("--result_csv", type=str, default="results/ggad_results.csv")
+
+    parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--weight_decay", type=float, default=0.0)
+    parser.add_argument("--embedding_dim", type=int, default=300)
+    parser.add_argument("--num_epoch", type=int, default=None)
+    parser.add_argument("--drop_prob", type=float, default=0.0)
+    parser.add_argument("--readout", type=str, default="avg", choices=["avg", "max", "min", "weighted_sum"])
+    parser.add_argument("--auc_test_rounds", type=int, default=256)
+    parser.add_argument("--negsamp_ratio", type=int, default=1)
+    parser.add_argument("--mean", type=float, default=None)
+    parser.add_argument("--var", type=float, default=None)
+    parser.add_argument("--confidence_margin", type=float, default=0.7)
+
+    parser.add_argument("--train_rate", type=float, default=0.3)
+    parser.add_argument("--val_rate", type=float, default=0.1)
+    parser.add_argument("--normal_rate", type=float, default=0.5)
+    parser.add_argument("--outlier_rate", type=float, default=None)
+
+    parser.add_argument("--num_trials", type=int, default=1)
+    parser.add_argument("--seed_start", type=int, default=0)
+    parser.add_argument("--seeds", type=str, default=None, help="Comma-separated seeds, e.g. 0,1,2,3,4")
+    return parser
+
+
+def main() -> None:
+    args = apply_default_args(build_arg_parser().parse_args())
+    seeds = parse_seeds(args.seeds, args.num_trials, args.seed_start)
+
+    trial_rows = []
+    for seed in tqdm(seeds, desc="Trial", position=0, leave=False):
+        trial_rows.append(train_one_trial(args, seed))
+
+    auc_values = [r["auc"] for r in trial_rows]
+    auprc_values = [r["auprc"] for r in trial_rows]
+    total_time_min = sum(r["train_time_min"] for r in trial_rows)
+
+    summary_row = {
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "dataset": args.dataset,
+        "epochs": args.num_epoch,
+        "trial": args.num_trials,
+        "auc": metric_summary(auc_values),
+        "auprc": metric_summary(auprc_values),
+        "train_time_min": f"{total_time_min:.2f}",
+    }
+
+    append_results_csv(args.result_csv, summary_row)
+
+    print("Training finished.")
+    print(f"Dataset: {args.dataset}")
+    print(f"Epochs: {args.num_epoch}")
+    print(f"Trials: {args.num_trials}")
+    print(f"AUC: {summary_row['auc']}")
+    print(f"AUPRC: {summary_row['auprc']}")
+    print(f"Results saved to: {Path(args.result_csv).expanduser()}")
+
+
+if __name__ == "__main__":
+    main()
