@@ -189,6 +189,7 @@ def train_one_trial(args: argparse.Namespace, seed: int) -> dict:
         )
         scores = np.squeeze(logits[:, idx_test, :].cpu().numpy())
         y_true = ano_label[idx_test]
+        scores = np.nan_to_num(scores, nan=0.0)
         final_auc = roc_auc_score(y_true, scores) * 100.0
         precision, recall, thresholds = precision_recall_curve(y_true, scores)
         final_auprc = auc(recall, precision) * 100.0

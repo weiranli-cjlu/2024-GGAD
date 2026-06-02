@@ -42,6 +42,7 @@ def normalize_adj(adj):
     """Symmetrically normalize adjacency matrix."""
     adj = sp.coo_matrix(adj)
     rowsum = np.array(adj.sum(1))
+    rowsum[rowsum == 0] = 1  # 避免除零
     d_inv_sqrt = np.power(rowsum, -0.5).flatten()
     d_inv_sqrt[np.isinf(d_inv_sqrt)] = 0.0
     d_mat_inv_sqrt = sp.diags(d_inv_sqrt)
