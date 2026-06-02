@@ -5,6 +5,7 @@ import random
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import List
 
 import numpy as np
 import scipy.sparse as sp
@@ -23,11 +24,29 @@ DEFAULT_DATA_DIR = "~/datasets/GAD/mat"
 def set_seed(seed: int) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def resolve_device(device_arg: str) -> torch.device:
+    """Resolve --device. Use CUDA when available for --device auto."""
+    device_arg = str(device_arg).lower()
+    if device_arg == "auto":
+        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if device_arg.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError("--device was set to CUDA, but torch.cuda.is_available() is False.")
+    device = torch.device(device_arg)
+    if device.type == "cuda":
+        torch.cuda.set_device(device)
+    return device
+
+
+def move_to_device(device: torch.device, *tensors):
+    return [tensor.to(device, non_blocking=True) for tensor in tensors]
 
 
 def apply_default_args(args: argparse.Namespace) -> argparse.Namespace:
@@ -106,13 +125,16 @@ def train_one_trial(args: argparse.Namespace, seed: int) -> dict:
     set_seed(seed)
     trial_start = time.time()
 
+    device = resolve_device(args.device)
     features, adj, raw_adj, labels, idx_test, ano_label, normal_label_idx, abnormal_label_idx = prepare_data(args)
+    features, adj, raw_adj, labels = move_to_device(device, features, adj, raw_adj, labels)
 
     ft_size = features.shape[2]
-    model = Model(ft_size, args.embedding_dim, "prelu", args.negsamp_ratio, args.readout)
+    model = Model(ft_size, args.embedding_dim, "prelu", args.negsamp_ratio, args.readout).to(device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     b_xent = nn.BCEWithLogitsLoss(
-        reduction="none", pos_weight=torch.tensor([args.negsamp_ratio], dtype=torch.float32)
+        reduction="none",
+        pos_weight=torch.tensor([args.negsamp_ratio], dtype=torch.float32, device=device),
     )
 
     final_auc = np.nan
@@ -128,7 +150,10 @@ def train_one_trial(args: argparse.Namespace, seed: int) -> dict:
         )
 
         lbl = torch.unsqueeze(
-            torch.cat((torch.zeros(len(normal_label_idx)), torch.ones(len(emb_con)))), 1
+            torch.cat((
+                torch.zeros(len(normal_label_idx), device=device),
+                torch.ones(len(emb_con), device=device),
+            )), 1
         ).unsqueeze(0)
 
         loss_bce = torch.mean(b_xent(logits, lbl))
@@ -175,7 +200,7 @@ def train_one_trial(args: argparse.Namespace, seed: int) -> dict:
     }
 
 
-def metric_summary(values: list[float]) -> str:
+def metric_summary(values: List[float]) -> str:
     arr = np.array(values, dtype=float)
     return f"{arr.mean():.2f}±{arr.std(ddof=0):.2f}({arr.max():.2f})"
 
@@ -207,6 +232,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dataset", type=str, default="Reddit")
     parser.add_argument("--data_dir", type=str, default=DEFAULT_DATA_DIR)
     parser.add_argument("--result_csv", type=str, default="results/ggad_results.csv")
+    parser.add_argument("--device", type=str, default="auto", help="auto, cpu, cuda, cuda:0, cuda:1, ...")
 
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--weight_decay", type=float, default=0.0)
