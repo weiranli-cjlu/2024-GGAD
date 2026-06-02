@@ -158,21 +158,6 @@ class Model(nn.Module):
 
             emb_combine = torch.cat((emb[:, normal_idx, :], torch.unsqueeze(emb_con, 0)), 1)
 
-            # TODO ablation study add noise on the selected nodes
-
-            # std = 0.01
-            # mean = 0.02
-            # noise = torch.randn(emb[:, sample_abnormal_idx, :].size()) * std + mean
-            # emb_combine = torch.cat((emb[:, normal_idx, :], emb[:, sample_abnormal_idx, :] + noise), 1)
-
-            # TODO ablation study generate outlier from random noise
-            # std = 0.01
-            # mean = 0.02
-            # emb_con = torch.mm(neigh_adj, emb[0, :, :])
-            # noise = torch.randn(emb_con.size()) * std + mean
-            # emb_con = self.act(self.fc4(noise))
-            # emb_combine = torch.cat((emb[:, normal_idx, :], torch.unsqueeze(emb_con, 0)), 1)
-
             f_1 = self.fc1(emb_combine)
             f_1 = self.act(f_1)
             f_2 = self.fc2(f_1)

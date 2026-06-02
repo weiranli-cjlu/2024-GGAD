@@ -6,29 +6,21 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import dgl
 import numpy as np
 import scipy.sparse as sp
 import torch
 import torch.nn as nn
 from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
-from tqdm import trange, tqdm
+from tqdm import trange
 
 from model import Model
-from utils import adj_to_dgl_graph, load_mat, normalize_adj, preprocess_features
+from utils import load_mat, normalize_adj, preprocess_features
 
 
 DEFAULT_DATA_DIR = "~/datasets/GAD/mat"
 
 
-def parse_seeds(seeds: str | None, num_trials: int, seed_start: int) -> list[int]:
-    if seeds:
-        return [int(s.strip()) for s in seeds.split(",") if s.strip() != ""]
-    return list(range(seed_start, seed_start + num_trials))
-
-
 def set_seed(seed: int) -> None:
-    dgl.random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -96,7 +88,6 @@ def prepare_data(args: argparse.Namespace):
     else:
         features = features.todense()
 
-    _ = adj_to_dgl_graph(adj)  # 保留兼容性；当前训练未直接使用 dgl_graph。
     raw_adj = adj
     adj = normalize_adj(adj)
 
@@ -235,18 +226,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--outlier_rate", type=float, default=None)
 
     parser.add_argument("--num_trials", type=int, default=1)
-    parser.add_argument("--seed_start", type=int, default=0)
-    parser.add_argument("--seeds", type=str, default=None, help="Comma-separated seeds, e.g. 0,1,2,3,4")
+    parser.add_argument("--seed", type=int, default=0)
     return parser
 
 
 def main() -> None:
     args = apply_default_args(build_arg_parser().parse_args())
-    seeds = parse_seeds(args.seeds, args.num_trials, args.seed_start)
 
     trial_rows = []
-    for seed in tqdm(seeds, desc="Trial", position=0, leave=False):
-        trial_rows.append(train_one_trial(args, seed))
+    for trial in trange(args.num_trials, desc="Trial", position=0, leave=False):
+        trial_rows.append(train_one_trial(args, seed=args.seed+trial))
 
     auc_values = [r["auc"] for r in trial_rows]
     auprc_values = [r["auprc"] for r in trial_rows]

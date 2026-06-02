@@ -2,7 +2,6 @@ from collections import Counter
 from pathlib import Path
 import random
 
-import dgl
 import networkx as nx
 import numpy as np
 import scipy.io as sio
@@ -141,36 +140,3 @@ def load_mat(
         normal_label_idx,
         abnormal_label_idx,
     )
-
-
-def adj_to_dgl_graph(adj):
-    """Convert adjacency matrix to DGL graph."""
-    try:
-        nx_graph = nx.from_scipy_sparse_array(adj)
-    except AttributeError:
-        nx_graph = nx.from_scipy_sparse_matrix(adj)
-    return dgl.from_networkx(nx_graph)
-
-
-def generate_rwr_subgraph(dgl_graph, subgraph_size):
-    """Generate subgraphs with random walk with restart. Kept for baseline compatibility."""
-    all_idx = list(range(dgl_graph.number_of_nodes()))
-    reduced_size = subgraph_size - 1
-    traces = dgl.contrib.sampling.random_walk_with_restart(
-        dgl_graph, all_idx, restart_prob=1, max_nodes_per_seed=subgraph_size * 3
-    )
-    subv = []
-    for i, trace in enumerate(traces):
-        subv.append(torch.unique(torch.cat(trace), sorted=False).tolist())
-        retry_time = 0
-        while len(subv[i]) < reduced_size:
-            cur_trace = dgl.contrib.sampling.random_walk_with_restart(
-                dgl_graph, [i], restart_prob=0.9, max_nodes_per_seed=subgraph_size * 5
-            )
-            subv[i] = torch.unique(torch.cat(cur_trace[0]), sorted=False).tolist()
-            retry_time += 1
-            if len(subv[i]) <= 2 and retry_time > 10:
-                subv[i] = subv[i] * reduced_size
-        subv[i] = subv[i][: reduced_size * 3]
-        subv[i].append(i)
-    return subv
