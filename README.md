@@ -78,11 +78,11 @@ python run.py --dataset tolokers \
 
 python run.py --dataset Amazon \
     --num_trials 10 \
-    --lr 0.0018594905297927152 --weight_decay 0.0 \
-    --embedding_dim 64 --readout max \
-    --negsamp_ratio 4 --mean 0.013069794252316608\
-    --var 0.036096315999879905 --confidence_margin 1.2180772843597365 \
-    --normal_rate 0.4441505274691648 --outlier_rate 0.20747353804958163
+    --lr 0.0009995608839247314 --weight_decay 0.0 \
+    --embedding_dim 512 --readout avg \
+    --negsamp_ratio 3 --mean 0.014733485494459972\
+    --var 0.04088479416976854 --confidence_margin 0.8033577685934636 \
+    --normal_rate 0.33942400593162136 --outlier_rate 0.1886581012743655
 
 python run.py --dataset ACM \
     --num_trials 10 \
