@@ -2,11 +2,10 @@ from collections import Counter
 from pathlib import Path
 import random
 
-import networkx as nx
 import numpy as np
 import scipy.io as sio
 import scipy.sparse as sp
-import torch
+from sklearn.model_selection import train_test_split
 
 
 def sparse_to_tuple(sparse_mx, insert_batch=False):
@@ -104,14 +103,28 @@ def load_mat(
         attr_ano_labels = None
 
     num_node = adj.shape[0]
-    num_train = int(num_node * train_rate)
-    num_val = int(num_node * val_rate)
 
-    all_idx = list(range(num_node))
-    random.shuffle(all_idx)
-    idx_train = all_idx[:num_train]
-    idx_val = all_idx[num_train : num_train + num_val]
-    idx_test = all_idx[num_train + num_val :]
+    all_idx = np.arange(num_node)
+
+    idx_train, idx_temp = train_test_split(
+        all_idx,
+        train_size=train_rate,
+        stratify=ano_labels,
+        random_state=random.randint(0, 10**9),
+    )
+
+    val_ratio = val_rate / (1.0 - train_rate)
+
+    idx_val, idx_test = train_test_split(
+        idx_temp,
+        train_size=val_ratio,
+        stratify=ano_labels[idx_temp],
+        random_state=random.randint(0, 10**9),
+    )
+
+    idx_train = idx_train.tolist()
+    idx_val = idx_val.tolist()
+    idx_test = idx_test.tolist()
 
     all_normal_label_idx = [i for i in idx_train if ano_labels[i] == 0]
     normal_label_idx = all_normal_label_idx[: int(len(all_normal_label_idx) * normal_rate)]

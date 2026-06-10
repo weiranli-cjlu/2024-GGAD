@@ -36,7 +36,7 @@ def add_optuna_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     group.add_argument("--study_name", type=str, default=None, help="Optuna study name.")
     group.add_argument("--storage", type=str, default=None, help="Optuna DB URL, e.g. sqlite:///results/ggad_optuna.db")
     group.add_argument("--metric", type=str, default="auc", choices=["auc", "auprc"], help="Metric to maximize.")
-    group.add_argument("--sampler_seed", type=int, default=0, help="Seed for Optuna sampler.")
+    group.add_argument("--sampler_seed", type=int, default=42, help="Seed for Optuna sampler.")
     group.add_argument("--n_jobs", type=int, default=1, help="Parallel Optuna jobs. Use >1 only if memory allows.")
     group.add_argument("--save_dir", type=str, default="results")
     return parser
@@ -53,11 +53,6 @@ def suggest_params(trial: optuna.Trial) -> dict[str, Any]:
     embedding_dim = trial.suggest_categorical("embedding_dim", [64, 128, 256, 300, 512])
     readout = trial.suggest_categorical("readout", ["avg", "max", "min"])
 
-    # weighted_sum in model.py uses a hard-coded repeat size of 64, so only enable it
-    # when embedding_dim == 64 unless you refactor WSReadout.
-    if embedding_dim == 64:
-        readout = trial.suggest_categorical("readout_64", ["avg", "max", "min", "weighted_sum"])
-
     return {
         "lr": trial.suggest_float("lr", 1e-5, 5e-2, log=True),
         "weight_decay": trial.suggest_categorical("weight_decay", [0.0, 1e-8, 1e-6, 1e-5, 1e-4, 1e-3]),
@@ -69,6 +64,7 @@ def suggest_params(trial: optuna.Trial) -> dict[str, Any]:
         "outlier_rate": trial.suggest_float("outlier_rate", 0.01, 0.30),
         "mean": trial.suggest_float("mean", 0.0, 0.10),
         "var": trial.suggest_float("var", 0.0, 0.10),
+        "num_epoch": trial.suggest_categorical("num_epoch", [50, 100, 200, 400])
     }
 
 
@@ -166,13 +162,9 @@ def main() -> None:
     )
     study.optimize(objective_factory(args), n_trials=args.n_trials, timeout=args.timeout, n_jobs=args.n_jobs, show_progress_bar=True)
     params = study.best_trial.params
-    best_cmd = f"""python run.py --dataset {args.dataset} \\
-    --num_trials 10 \\
-    --lr {params["lr"]} --weight_decay {params["weight_decay"]} \\
-    --embedding_dim {params["embedding_dim"]} --readout {params["readout"]} \\
-    --negsamp_ratio {params["negsamp_ratio"]} --mean {params["mean"]}\\
-    --var {params["var"]} --confidence_margin {params["confidence_margin"]} \\
-    --normal_rate {params["normal_rate"]} --outlier_rate {params["outlier_rate"]}"""
+    best_cmd = f"python run.py --dataset {args.dataset} --num_trials 10"
+    for k, v in params.items():
+        best_cmd += f" \\\n\t--{k} {v}"
     with open(args.best_cmd, "w") as f:
         f.write(best_cmd)
 
