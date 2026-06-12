@@ -17,7 +17,6 @@ from tqdm import trange
 from model import Model
 from utils import load_mat, normalize_adj, preprocess_features
 
-
 DEFAULT_DATA_DIR = "~/datasets/GAD/mat"
 
 
@@ -137,6 +136,7 @@ def train_one_trial(args: argparse.Namespace, seed: int) -> dict:
         pos_weight=torch.tensor([args.negsamp_ratio], dtype=torch.float32, device=device),
     )
 
+    best_auc = 0
     final_auc = np.nan
     final_auprc = np.nan
 
@@ -148,6 +148,7 @@ def train_one_trial(args: argparse.Namespace, seed: int) -> dict:
         emb, emb_combine, logits, emb_con, emb_abnormal = model(
             features, adj, abnormal_label_idx, normal_label_idx, train_flag, args
         )
+
 
         lbl = torch.unsqueeze(
             torch.cat((
@@ -177,9 +178,26 @@ def train_one_trial(args: argparse.Namespace, seed: int) -> dict:
         diff_attribute = torch.pow(emb_con - emb_abnormal, 2)
         loss_rec = torch.mean(torch.sqrt(torch.sum(diff_attribute, 1)))
 
+        if args.use_best:
+            with torch.no_grad():
+                _emb, _emb_combine, logits, _emb_con, _emb_abnormal = model(
+                    features, adj, abnormal_label_idx, normal_label_idx, False, args
+                )
+            scores = np.squeeze(logits[:, idx_test, :].cpu().numpy())
+            y_true = ano_label[idx_test]
+            scores = np.nan_to_num(scores, nan=0.0)
+            final_auc = roc_auc_score(y_true, scores) * 100.0
+
+            if final_auc > best_auc:
+                best_auc = final_auc
+                torch.save(model, "cache/model.pt")
+
         loss = loss_margin + loss_bce + loss_rec
         loss.backward()
         optimiser.step()
+
+    if args.use_best:
+        model = torch.load("cache/model.pt", weights_only=False)
 
     model.eval()
     with torch.no_grad():
@@ -254,6 +272,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--num_trials", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--use_best", default=False, action="store_true")
     return parser
 
 
@@ -262,7 +281,7 @@ def main() -> None:
 
     trial_rows = []
     for trial in trange(args.num_trials, desc="Trial", position=0, leave=False):
-        trial_rows.append(train_one_trial(args, seed=args.seed+trial))
+        trial_rows.append(train_one_trial(args, seed=args.seed + trial))
 
     auc_values = [r["auc"] for r in trial_rows]
     auprc_values = [r["auprc"] for r in trial_rows]

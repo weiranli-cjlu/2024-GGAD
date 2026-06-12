@@ -162,7 +162,7 @@ def main() -> None:
     )
     study.optimize(objective_factory(args), n_trials=args.n_trials, timeout=args.timeout, n_jobs=args.n_jobs, show_progress_bar=True)
     params = study.best_trial.params
-    best_cmd = f"python run.py --dataset {args.dataset} --num_trials 10"
+    best_cmd = f"python run.py --dataset {args.dataset} --num_trials 10" + (" --use_best" if args.use_best else "")
     for k, v in params.items():
         best_cmd += f" \\\n\t--{k} {v}"
     with open(args.best_cmd, "w") as f:

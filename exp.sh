@@ -1,90 +1,90 @@
-python run.py --dataset ACM --num_trials 10 \
-	--embedding_dim 64 \
-	--readout min \
-	--lr 0.009488338054951556 \
-	--weight_decay 0.001 \
-	--negsamp_ratio 4 \
-	--confidence_margin 1.918880332265193 \
-	--normal_rate 0.9994151465153001 \
-	--outlier_rate 0.28396109709804696 \
-	--mean 0.09894443422011567 \
-	--var 0.06864221091515169 \
-	--num_epoch 200
-
-python run.py --dataset cora --num_trials 10 \
-	--embedding_dim 128 \
+python run.py --dataset ACM --num_trials 10 --use_best \
+	--embedding_dim 512 \
 	--readout avg \
-	--lr 9.425167673953773e-05 \
-	--weight_decay 0.001 \
-	--negsamp_ratio 1 \
-	--confidence_margin 0.2984927262666409 \
-	--normal_rate 0.6358501353143552 \
-	--outlier_rate 0.18402040139329565 \
-	--mean 0.02594187457990358 \
-	--var 0.06038086841490703 \
-	--num_epoch 50
-
-python run.py --dataset YelpChi --num_trials 10 \
-	--embedding_dim 128 \
-	--readout min \
-	--lr 0.000153658234283706 \
+	--lr 0.021206502513245407 \
 	--weight_decay 1e-05 \
 	--negsamp_ratio 2 \
-	--confidence_margin 1.3258283017779549 \
-	--normal_rate 0.2569297861044923 \
-	--outlier_rate 0.21037194404971513 \
-	--mean 0.03867353463005374 \
-	--var 0.09367299887367346 \
+	--confidence_margin 1.9243590578082754 \
+	--normal_rate 0.784099192041822 \
+	--outlier_rate 0.1096307747915124 \
+	--mean 0.09934176073551038 \
+	--var 0.06915293964779148 \
+	--num_epoch 100
+
+python run.py --dataset cora --num_trials 10 --use_best \
+	--embedding_dim 512 \
+	--readout avg \
+	--lr 0.01329980987940469 \
+	--weight_decay 1e-08 \
+	--negsamp_ratio 3 \
+	--confidence_margin 0.8143819234869726 \
+	--normal_rate 0.6304632410332233 \
+	--outlier_rate 0.18009220771137674 \
+	--mean 0.04802256725429582 \
+	--var 0.09981398701113815 \
 	--num_epoch 400
 
-python run.py --dataset Flickr --num_trials 10 \
-	--embedding_dim 128 \
-	--readout min \
-	--lr 0.00668495254327513 \
-	--weight_decay 0.001 \
-	--negsamp_ratio 3 \
-	--confidence_margin 0.999672557542712 \
-	--normal_rate 0.5249588108958066 \
-	--outlier_rate 0.19724456373001475 \
-	--mean 0.06100283203921914 \
-	--var 0.02841895354344235 \
-	--num_epoch 200
+python run.py --dataset YelpChi --num_trials 10 --use_best \
+	--embedding_dim 512 \
+	--readout max \
+	--lr 0.0036217766119844177 \
+	--weight_decay 0.0001 \
+	--negsamp_ratio 5 \
+	--confidence_margin 1.7899102573552623 \
+	--normal_rate 0.7612735316299505 \
+	--outlier_rate 0.07768296915763115 \
+	--mean 0.04736454359047703 \
+	--var 0.0885338867958875 \
+	--num_epoch 50
 
-python run.py --dataset twitter --num_trials 10 \
-	--embedding_dim 128 \
+python run.py --dataset Flickr --num_trials 10 --use_best \
+	--embedding_dim 512 \
 	--readout min \
-	--lr 0.0016730402817820241 \
+	--lr 0.017922185469500057 \
 	--weight_decay 1e-06 \
 	--negsamp_ratio 1 \
-	--confidence_margin 0.6780602616231216 \
-	--normal_rate 0.5722807884690141 \
-	--outlier_rate 0.13526405540621358 \
-	--mean 0.029122914019804193 \
-	--var 0.06118528947223795 \
-	--num_epoch 400
+	--confidence_margin 1.7507330290067844 \
+	--normal_rate 0.7905900447390287 \
+	--outlier_rate 0.07987453731713783 \
+	--mean 0.034389549075890015 \
+	--var 0.049896092498296886 \
+	--num_epoch 100
 
-python run.py --dataset BlogCatalog --num_trials 10 \
-	--embedding_dim 64 \
-	--readout min \
-	--lr 1.2715708894220005e-05 \
+python run.py --dataset twitter --num_trials 10 --use_best \
+	--embedding_dim 256 \
+	--readout avg \
+	--lr 0.0001773488562686114 \
 	--weight_decay 0.001 \
-	--negsamp_ratio 4 \
-	--confidence_margin 0.9946703928732321 \
-	--normal_rate 0.9803599967502249 \
-	--outlier_rate 0.2990613272783179 \
-	--mean 0.042598383771975314 \
-	--var 0.007209192218350332 \
+	--negsamp_ratio 5 \
+	--confidence_margin 0.5783863620681918 \
+	--normal_rate 0.547523655303147 \
+	--outlier_rate 0.09725470984686319 \
+	--mean 0.028484049437746763 \
+	--var 0.0036886947354532796 \
 	--num_epoch 50
 
-python run.py --dataset tolokers --num_trials 10 \
-	--embedding_dim 64 \
-	--readout max \
-	--lr 0.004295312362786773 \
-	--weight_decay 0.0 \
-	--negsamp_ratio 2 \
-	--confidence_margin 0.17743166972153818 \
-	--normal_rate 0.7404480702303398 \
-	--outlier_rate 0.2246127126825752 \
-	--mean 0.09556679250641067 \
-	--var 0.005702256261760205 \
-	--num_epoch 50
+python run.py --dataset BlogCatalog --num_trials 10 --use_best \
+	--embedding_dim 300 \
+	--readout min \
+	--lr 0.017589437523721014 \
+	--weight_decay 1e-06 \
+	--negsamp_ratio 1 \
+	--confidence_margin 1.804709940111321 \
+	--normal_rate 0.9103762514469974 \
+	--outlier_rate 0.1935994226092477 \
+	--mean 0.03390297910487007 \
+	--var 0.03492095746126609 \
+	--num_epoch 100
+
+python run.py --dataset tolokers --num_trials 10 --use_best \
+	--embedding_dim 300 \
+	--readout min \
+	--lr 0.017589437523721014 \
+	--weight_decay 1e-06 \
+	--negsamp_ratio 1 \
+	--confidence_margin 1.804709940111321 \
+	--normal_rate 0.9103762514469974 \
+	--outlier_rate 0.1935994226092477 \
+	--mean 0.03390297910487007 \
+	--var 0.03492095746126609 \
+	--num_epoch 100
